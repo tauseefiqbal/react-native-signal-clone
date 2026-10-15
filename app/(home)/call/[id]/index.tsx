@@ -37,12 +37,21 @@ const theme: DeepPartial<Theme> = {
     container: svgContainerStyle,
   },
   acceptCallButton: {
-    container: svgContainerStyle,
+    container: {
+      ...svgContainerStyle,
+      backgroundColor: '#20ba5c',
+    },
   },
   rejectCallButton: {
-    container: svgContainerStyle,
+    container: {
+      ...svgContainerStyle,
+      backgroundColor: '#eb5545',
+    },
   },
   toggleAudioPublishingButton: {
+    svgContainer: svgContainerStyle,
+  },
+  toggleVideoPublishingButton: {
     svgContainer: svgContainerStyle,
   },
   toggleCameraFaceButton: {

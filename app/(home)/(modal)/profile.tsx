@@ -16,12 +16,18 @@ const ProfileScreen = () => {
   const { user } = useUser();
   const { client } = useChatContext();
   const clerk = useClerk();
-  const usernameParts = user?.username?.split('_')!;
+  const rawUsername = user?.username || '';
+  const lastUnderscore = rawUsername.lastIndexOf('_');
+  const parsedUsername =
+    lastUnderscore !== -1 ? rawUsername.substring(0, lastUnderscore) : rawUsername;
+  const parsedNumber =
+    lastUnderscore !== -1 ? rawUsername.substring(lastUnderscore + 1) : '01';
+
   const initialFormValues = {
-    firstName: user?.firstName!,
-    lastName: user?.lastName!,
-    username: usernameParts[0],
-    usernameNumber: usernameParts[1],
+    firstName: user?.firstName || '',
+    lastName: user?.lastName || '',
+    username: parsedUsername,
+    usernameNumber: parsedNumber,
   };
   const defaultImage: ImagePickerAsset = {
     uri: user?.hasImage ? user?.imageUrl : '',

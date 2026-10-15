@@ -34,7 +34,9 @@ const SignUpScreen = () => {
 
   const completeSignUp = async (sessionId: string | null) => {
     if (!sessionId) return false;
-    await setActive({ session: sessionId });
+    if (setActive) {
+      await setActive({ session: sessionId });
+    }
     router.replace('/chats');
     return true;
   };

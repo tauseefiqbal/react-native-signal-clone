@@ -2,9 +2,12 @@ import { useUser } from '@clerk/clerk-expo';
 import {
   StreamVideo,
   StreamVideoClient,
+  useCalls,
 } from '@stream-io/video-react-native-sdk';
+import Constants from 'expo-constants';
 import { Stack, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import { StreamChat } from 'stream-chat';
 import {
   Chat,
@@ -15,16 +18,52 @@ import {
 
 import ScreenLoading from '@/components/ScreenLoading';
 
+const getBaseUrl = () => {
+  if (Platform.OS === 'web') return '';
+  if (process.env.EXPO_PUBLIC_API_URL) {
+    return process.env.EXPO_PUBLIC_API_URL.replace(/\/$/, '');
+  }
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    return `http://${hostUri}`;
+  }
+  return 'http://localhost:8081';
+};
+
 const tokenProvider = async (userId: string) => {
-  const response = await fetch('/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ userId }),
-  });
-  const data = await response.json();
-  return data.token;
+  const baseUrl = getBaseUrl();
+  const endpoint = `${baseUrl}/token`;
+
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ userId }),
+    });
+    const data = await response.json();
+    return data.token;
+  } catch (error) {
+    // When testing via USB debugging with adb reverse, try fallback to localhost
+    if (Platform.OS !== 'web' && !endpoint.includes('localhost:8081')) {
+      try {
+        const fallbackRes = await fetch('http://localhost:8081/token', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ userId }),
+        });
+        const fallbackData = await fallbackRes.json();
+        return fallbackData.token;
+      } catch {
+        // Ignore fallback failure, throw original
+      }
+    }
+    console.error('Error fetching token from', endpoint, error);
+    throw error;
+  }
 };
 
 const chatTheme: ChatDeepPartial<ChatTheme> = {
@@ -93,6 +132,29 @@ const chatTheme: ChatDeepPartial<ChatTheme> = {
 
 const API_KEY = process.env.EXPO_PUBLIC_STREAM_API_KEY as string;
 
+const IncomingCallHandler = () => {
+  const router = useRouter();
+  const calls = useCalls().filter((call) => call.ringing);
+
+  const ringingCall = calls[0];
+  const isCallCreatedByMe =
+    ringingCall?.state?.custom.triggeredBy === ringingCall?.currentUserId;
+
+  useEffect(() => {
+    if (isCallCreatedByMe) return;
+    if (ringingCall) {
+      router.navigate({
+        pathname: `/call/[id]`,
+        params: {
+          id: ringingCall.id,
+        },
+      });
+    }
+  }, [ringingCall, isCallCreatedByMe, router]);
+
+  return null;
+};
+
 const HomeLayout = () => {
   const router = useRouter();
   const { user, isSignedIn } = useUser();
@@ -103,51 +165,69 @@ const HomeLayout = () => {
   useEffect(() => {
     if (!isSignedIn) {
       router.replace('/sign-in');
+      return;
     }
+    if (!user?.id) return;
+
+    let cancelled = false;
 
     const customProvider = async () => {
-      const token = await tokenProvider(user!.id);
+      const token = await tokenProvider(user.id);
       return token;
     };
 
     const setUpStream = async () => {
       try {
-        const chatClient = StreamChat.getInstance(API_KEY);
-        const clerkUser = user!;
+        const nextChatClient = StreamChat.getInstance(API_KEY);
         const chatUser = {
-          id: clerkUser.id,
-          name: clerkUser.fullName!,
-          image: clerkUser.hasImage ? clerkUser.imageUrl : undefined,
-          username: clerkUser.username!,
+          id: user.id,
+          name: user.fullName!,
+          image: user.hasImage ? user.imageUrl : undefined,
+          username: user.username!,
         };
 
-        if (!chatClient.user) {
-          await chatClient.connectUser(chatUser, customProvider);
+        if (!nextChatClient.user) {
+          await nextChatClient.connectUser(chatUser, customProvider);
         }
+        if (cancelled) return;
 
-        setChatClient(chatClient);
-        const videoClient = StreamVideoClient.getOrCreateInstance({
+        setChatClient(nextChatClient);
+
+        const nextVideoClient = StreamVideoClient.getOrCreateInstance({
           apiKey: API_KEY,
           user: chatUser,
           tokenProvider: customProvider,
         });
-        setVideoClient(videoClient);
+        if (cancelled) return;
+
+        setVideoClient(nextVideoClient);
       } catch (error) {
         console.error('Error setting up Stream:', error);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
-    if (user) setUpStream();
+    setUpStream();
 
     return () => {
-      if (!isSignedIn) {
-        chatClient?.disconnectUser();
-        videoClient?.disconnectUser();
-      }
+      cancelled = true;
     };
-  }, [user, videoClient, chatClient, isSignedIn, router]);
+  }, [
+    user?.id,
+    user?.fullName,
+    user?.hasImage,
+    user?.imageUrl,
+    user?.username,
+    isSignedIn,
+    router,
+  ]);
+
+  useEffect(() => {
+    if (isSignedIn) return;
+    chatClient?.disconnectUser();
+    videoClient?.disconnectUser();
+  }, [isSignedIn, chatClient, videoClient]);
 
   if (loading) return <ScreenLoading />;
 
@@ -155,6 +235,7 @@ const HomeLayout = () => {
     <OverlayProvider>
       <Chat client={chatClient!} style={chatTheme}>
         <StreamVideo client={videoClient!}>
+          <IncomingCallHandler />
           <Stack>
             <Stack.Screen
               name="(modal)"
