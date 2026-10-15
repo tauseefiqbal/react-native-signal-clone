@@ -32,20 +32,61 @@ const SignUpScreen = () => {
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const completeSignUp = async (sessionId: string | null) => {
+    if (!sessionId) return false;
+    await setActive({ session: sessionId });
+    router.replace('/chats');
+    return true;
+  };
+
   const onSignUpPress = async () => {
     if (!isLoaded || numberError) return;
     setLoading(true);
     try {
       const finalUsername = `${username}_${usernameNumber}`;
-      await signUp.create({
+      const created = await signUp.create({
         firstName,
         lastName,
         username: finalUsername,
         emailAddress: emailAddress.toLowerCase(),
         password,
       });
-      await signUp.prepareEmailAddressVerification({ strategy: 'email_code' });
-      setPendingVerification(true);
+
+      if (created.status === 'complete') {
+        await completeSignUp(created.createdSessionId);
+        return;
+      }
+
+      const needsEmailVerification =
+        created.unverifiedFields?.includes('email_address');
+
+      if (needsEmailVerification) {
+        try {
+          const alreadyPrepared =
+            created.verifications.emailAddress?.status === 'unverified';
+          if (!alreadyPrepared) {
+            await created.prepareEmailAddressVerification({
+              strategy: 'email_code',
+            });
+          }
+          setPendingVerification(true);
+          return;
+        } catch (prepareErr: any) {
+          const noSignUpAttempt = prepareErr?.errors?.some(
+            (error: { code?: string; longMessage?: string }) =>
+              error.code === 'client_state_invalid' ||
+              error.longMessage?.includes('No sign up')
+          );
+          if (noSignUpAttempt && (await completeSignUp(created.createdSessionId))) {
+            return;
+          }
+          throw prepareErr;
+        }
+      }
+
+      if (await completeSignUp(created.createdSessionId)) return;
+
+      console.error(JSON.stringify(created, null, 2));
     } catch (err) {
       getError(err);
     } finally {
@@ -62,8 +103,7 @@ const SignUpScreen = () => {
       });
 
       if (signUpAttempt.status === 'complete') {
-        await setActive({ session: signUpAttempt.createdSessionId });
-        router.replace('/chats');
+        await completeSignUp(signUpAttempt.createdSessionId);
       } else {
         console.error(JSON.stringify(signUpAttempt, null, 2));
       }
